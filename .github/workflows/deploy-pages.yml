@@ -62,7 +62,7 @@ jobs:
           fi
 
           # choose artifact dir
-          for d in build dist public docs __site; do
+          for d in build dist public docs __site _site; do
             if [ -d "$d" ]; then ARTIFACT="$d"; break; fi
           done
           if [ -z "$ARTIFACT" ]; then
@@ -85,9 +85,15 @@ jobs:
             cp -a "$ARTIFACT"/. gh-pages-public/ || true
           fi
 
-      - name: Upload Pages artifact
+      - name: Upload Pages artifact (for deploy-pages)
         uses: actions/upload-pages-artifact@v1
         with:
+          path: gh-pages-public
+
+      - name: Upload artifact (non-deprecated upload-artifact@v4)
+        uses: actions/upload-artifact@v4
+        with:
+          name: gh-pages-public
           path: gh-pages-public
 
       - name: Deploy to GitHub Pages
