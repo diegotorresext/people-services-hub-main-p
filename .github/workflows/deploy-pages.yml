@@ -1,4 +1,4 @@
-name: Build and deploy to GitHub Pages
+name: Build and deploy to gh-pages branch
 
 on:
   push:
@@ -7,9 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 jobs:
   build-and-deploy:
@@ -18,83 +16,52 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Detect project type and build
-        shell: bash
+      - name: Setup Node.js (if needed)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies (Node)
+        if: exists('package.json')
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install
+          fi
+
+      - name: Build (Node)
+        if: exists('package.json') && contains(join(fromJson(format('[%s]', join(github.event.head_commit.message, ''))), ''), '') || always()
+        run: |
+          if npm run | grep -q " build"; then
+            npm run build
+          else
+            echo "No npm build script found; skipping npm build"
+          fi
+
+      - name: Determine publish directory
+        id: detect
         run: |
           set -euo pipefail
-          ARTIFACT=""
-          echo "Checking for Node project..."
-          if [ -f package.json ]; then
-            echo "Found package.json — using Node build"
-            # Use setup-node rather than apt where possible; runner often has Node but install if needed
-            if ! command -v node >/dev/null 2>&1; then
-              curl -sL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-              sudo apt-get install -y nodejs
-            fi
-            if [ -f package-lock.json ]; then
-              npm ci
-            elif [ -f yarn.lock ]; then
-              npm install
-            else
-              npm install
-            fi
-            if npm run | grep -q " build"; then
-              npm run build
-            else
-              echo "No build script found; skipping npm build"
-            fi
-          elif [ -f Gemfile ] || [ -f _config.yml ]; then
-            echo "Detected Jekyll site — building with bundler"
-            sudo apt-get update
-            sudo apt-get install -y ruby-full build-essential zlib1g-dev
-            export GEM_HOME="$HOME/gems"
-            export PATH="$GEM_HOME/bin:$PATH"
-            gem install bundler
-            bundle install
-            bundle exec jekyll build
-          elif [ -f config.toml ] || [ -d archetypes ]; then
-            echo "Detected Hugo site — installing hugo"
-            sudo apt-get update
-            sudo apt-get install -y hugo
-            hugo -v
-          else
-            echo "No recognized build files; assuming static site"
-          fi
-
-          # choose artifact dir
-          for d in build dist public docs __site _site; do
-            if [ -d "$d" ]; then ARTIFACT="$d"; break; fi
+          PUBLISH_DIR=""
+          for d in build dist public docs _site; do
+            if [ -d "$d" ]; then PUBLISH_DIR="$d"; break; fi
           done
-          if [ -z "$ARTIFACT" ]; then
-            if [ -f index.html ]; then
-              ARTIFACT="."
-            else
-              echo "No artifact directory found; creating empty public"
-              ARTIFACT="public"
-              mkdir -p public
-            fi
+          if [ -z "$PUBLISH_DIR" ] && [ -f index.html ]; then
+            PUBLISH_DIR="."
           fi
-          echo "Artifact dir: $ARTIFACT"
-
-          # prepare artifact for upload
-          rm -rf ./gh-pages-public || true
-          mkdir -p gh-pages-public
-          if [ "$ARTIFACT" = "." ]; then
-            cp -a ./* gh-pages-public/ || true
-          else
-            cp -a "$ARTIFACT"/. gh-pages-public/ || true
+          if [ -z "$PUBLISH_DIR" ]; then
+            echo "No publish dir detected; creating empty public/"
+            mkdir -p public
+            PUBLISH_DIR="public"
           fi
+          echo "publish_dir=$PUBLISH_DIR" >> $GITHUB_OUTPUT
 
-      - name: Upload Pages artifact (for deploy-pages)
-        uses: actions/upload-pages-artifact@v1
+      - name: Deploy to gh-pages branch
+        uses: peaceiris/actions-gh-pages@v3
         with:
-          path: gh-pages-public
-
-      - name: Upload artifact (non-deprecated upload-artifact@v4)
-        uses: actions/upload-artifact@v4
-        with:
-          name: gh-pages-public
-          path: gh-pages-public
-
-      - name: Deploy to GitHub Pages
-        uses: actions/deploy-pages@v1
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ${{ steps.detect.outputs.publish_dir }}
+          user_name: github-actions[bot]
+          user_email: 41898282+github-actions[bot]@users.noreply.github.com
